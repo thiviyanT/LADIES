@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-
 from utils import *
-from tqdm import tqdm
 import argparse
 import scipy
 import multiprocessing as mp
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from sklearn.metrics import f1_score
+import time
 
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -42,6 +45,8 @@ parser.add_argument('--sample_method', type=str, default='ladies',
                     help='Sampled Algorithms: ladies/fastgcn/full')
 parser.add_argument('--cuda', type=int, default=0,
                     help='Avaiable GPU ID')
+parser.add_argument('--runs', type=int, default=1,
+                    help='Number of runs')
 
 
 
@@ -114,7 +119,7 @@ def fastgcn_sampler(seed, batch_nodes, samp_num_list, num_nodes, lap_matrix, dep
         after_nodes = np.random.choice(num_nodes, s_num, p = p, replace = False)
         #     col-select the lap_matrix (U), and then devided by the sampled probability for 
         #     unbiased-sampling. Finally, conduct row-normalization to avoid value explosion.         
-        adj = row_norm(U[: , after_nodes].multiply(1/p[after_nodes]))
+        adj = row_normalize(U[: , after_nodes].multiply(1/p[after_nodes]))
         #     Turn the sampled adjacency matrix into a sparse matrix. If implemented by PyG
         #     This sparse matrix can also provide index and value.
         adjs += [sparse_mx_to_torch_sparse_tensor(row_normalize(adj))]
@@ -175,7 +180,7 @@ def package_mxl(mxl, device):
 
 
 
-if args.cuda != -1:
+if args.cuda != -1 and torch.cuda.is_available():
     device = torch.device("cuda:" + str(args.cuda))
 else:
     device = torch.device("cpu")
@@ -203,17 +208,14 @@ elif args.sample_method == 'full':
     sampler = default_sampler
 
 
-# In[ ]:
-
-
 process_ids = np.arange(args.batch_num)
 samp_num_list = np.array([args.samp_num, args.samp_num, args.samp_num, args.samp_num, args.samp_num])
 
 pool = mp.Pool(args.pool_num)
 jobs = prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_list, len(feat_data), lap_matrix, args.n_layers)
 
-all_res = []
-for oiter in range(5):
+results = torch.empty(args.runs)
+for oiter in range(args.runs):
     encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, layers=args.n_layers, dropout = 0.2).to(device)
     susage  = SuGCN(encoder = encoder, num_classes=num_classes, dropout=0.5, inp = feat_data.shape[1])
     susage.to(device)
@@ -262,17 +264,18 @@ for oiter in range(5):
         loss_valid = F.cross_entropy(output, labels[output_nodes]).detach().tolist()
         valid_f1 = f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')
         print(("Epoch: %d (%.1fs) Train Loss: %.2f    Valid Loss: %.2f Valid F1: %.3f") %                   (epoch, np.sum(times), np.average(train_losses), loss_valid, valid_f1))
-        if valid_f1 > best_val + 1e-2:
-            best_val = valid_f1
-            torch.save(susage, './save/best_model.pt')
-            cnt = 0
-        else:
-            cnt += 1
-        if cnt == args.n_stops // args.batch_num:
-            break
-    best_model = torch.load('./save/best_model.pt')
-    best_model.eval()
-    test_f1s = []
+
+    #     if valid_f1 > best_val + 1e-2:
+    #         best_val = valid_f1
+    #         torch.save(susage, './save/best_model.pt')
+    #         cnt = 0
+    #     else:
+    #         cnt += 1
+    #     if cnt == args.n_stops // args.batch_num:
+    #         break
+    # best_model = torch.load('./save/best_model.pt')
+    # best_model.eval()
+
     
     '''
     If using batch sampling for inference:
@@ -285,18 +288,20 @@ for oiter in range(5):
     #         output = best_model.forward(feat_data[input_nodes], adjs)[output_nodes]
     #         test_f1 = f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')
     #         test_f1s += [test_f1]
-    
+
     '''
     If using full-batch inference:
     '''
+    susage.eval()
     batch_nodes = test_nodes
     adjs, input_nodes, output_nodes = default_sampler(np.random.randint(2**32 - 1), batch_nodes,
                                     samp_num_list * 20, len(feat_data), lap_matrix, args.n_layers)
     adjs = package_mxl(adjs, device)
-    output = best_model.forward(feat_data[input_nodes], adjs)[output_nodes]
+    output = susage.forward(feat_data[input_nodes], adjs)[output_nodes]
     test_f1s = [f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')]
     
     print('Iteration: %d, Test F1: %.3f' % (oiter, np.average(test_f1s)))
+    results[oiter] = np.average(test_f1s)
 
 '''
     Visualize the train-test curve
@@ -306,4 +311,6 @@ for oiter in range(5):
 # sb.lineplot(data = dt, x='batch', y='f1-score', hue='type')
 # plt.legend(loc='lower right')
 # plt.show()
+
+print(f'Mini Acc: {100 * results.mean():.2f} ± {100 * results.std():.2f}')
 
