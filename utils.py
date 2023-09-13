@@ -9,7 +9,27 @@ from collections import defaultdict
 import networkx as nx
 import sys
 import os
+# from ogb.nodeproppred import NodePropPredDataset
+# import dgl
 
+
+# def load_ogb(name):
+#     # Load the dataset and split
+#     dataset = NodePropPredDataset(name=name)
+#     split_idx = dataset.get_idx_split()
+#     graph, label = dataset[0]
+#
+#     # Convert DGL graph to NetworkX graph for processing
+#     G = dgl.to_networkx(graph)
+#     features = graph.ndata['feat'].numpy()
+#     labels = label.numpy().flatten()
+#
+#     # Extract edges, degrees, and train/val/test split
+#     edges = np.array(graph.edges())
+#     degrees = np.array(G.degree())[:, 1]
+#     idx_train, idx_val, idx_test = split_idx["train"].numpy(), split_idx["valid"].numpy(), split_idx["test"].numpy()
+#
+#     return edges, labels, features, np.max(labels) + 1, idx_train, idx_val, idx_test
 
 
 def parse_index_file(filename):
@@ -21,6 +41,15 @@ def parse_index_file(filename):
 
 def load_data(dataset_str):
 
+    if dataset_str == 'reddit':
+        raise NotImplementedError
+    if dataset_str == 'yelp':
+        raise NotImplementedError
+    if dataset_str == 'flickr':
+        raise NotImplementedError
+
+    if dataset_str == 'ogbn-arxiv' or dataset_str == 'ogbn-products':
+        return load_ogb(dataset_str)
     
     if dataset_str == 'ppi':
         prefix = './ppi/ppi'

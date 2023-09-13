@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser(description='Training GCN on Cora/CiteSeer/PubM
     Dataset arguments
 '''
 parser.add_argument('--dataset', type=str, default='reddit',
-                    help='Dataset name: Cora/CiteSeer/PubMed/Reddit')
+                    help='Dataset name: Cora/CiteSeer/PubMed/Reddit/Yelp/Flickr/Arxiv/Products')
 parser.add_argument('--nhid', type=int, default=256,
                     help='Hidden state dimension')
 parser.add_argument('--epoch_num', type=int, default= 100,
@@ -61,7 +61,7 @@ class GraphConvolution(nn.Module):
         self.linear = nn.Linear(n_in,  n_out)
     def forward(self, x, adj):
         out = self.linear(x)
-        return F.elu(torch.spmm(adj, out))
+        return F.relu(torch.spmm(adj, out))
 
 
 class GCN(nn.Module):
@@ -300,7 +300,7 @@ for oiter in range(args.runs):
     output = susage.forward(feat_data[input_nodes], adjs)[output_nodes]
     test_f1s = [f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')]
     
-    print('Iteration: %d, Test F1: %.3f' % (oiter, np.average(test_f1s)))
+    print('Iteration: %d, Test F1: %.3f' % (oiter+1, np.average(test_f1s)))
     results[oiter] = np.average(test_f1s)
 
 '''
@@ -312,5 +312,7 @@ for oiter in range(args.runs):
 # plt.legend(loc='lower right')
 # plt.show()
 
+print('-' * 10)
+print(f'Number of runs: {args.runs}')
 print(f'Mini Acc: {100 * results.mean():.2f} ± {100 * results.std():.2f}')
 
