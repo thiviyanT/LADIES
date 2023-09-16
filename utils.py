@@ -50,7 +50,10 @@ def load_torch_geom_data(dataset_name, root_dir):
     features = scaler.transform(feats)
 
     # Num classes
-    num_classes = np.max(labels)+1
+    if labels.ndim == 1:
+        num_classes = int(np.max(labels) + 1)
+    else:
+        num_classes = labels.shape[1]
 
     return np.array(edges), labels, features, num_classes, idx_train, idx_val, idx_test
 

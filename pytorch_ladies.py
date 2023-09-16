@@ -76,6 +76,7 @@ class GCN(nn.Module):
         self.dropout = nn.Dropout(dropout)
         for i in range(layers-1):
             self.gcs.append(GraphConvolution(nhid,  nhid))
+
     def forward(self, x, adjs):
         '''
             The difference here with the original GCN implementation is that
@@ -85,18 +86,19 @@ class GCN(nn.Module):
             x = self.dropout(self.gcs[idx](x, adjs[idx]))
         return x
 
+
 class SuGCN(nn.Module):
     def __init__(self, encoder, num_classes, dropout, inp):
         super(SuGCN, self).__init__()
         self.encoder = encoder
         self.dropout = nn.Dropout(dropout)
-        self.linear  = nn.Linear(self.encoder.nhid, num_classes)
+        self.linear = nn.Linear(self.encoder.nhid, num_classes)
+
     def forward(self, feat, adjs):
         x = self.encoder(feat, adjs)
         x = self.dropout(x)
         x = self.linear(x)
         return x
-
 
 
 def fastgcn_sampler(seed, batch_nodes, samp_num_list, num_nodes, lap_matrix, depth):
@@ -205,10 +207,10 @@ else:
     feat_data = torch.FloatTensor(feat_data).to(device)
 labels = torch.LongTensor(labels).to(device)
 
-# if labels.dim() == 1:
-#     loss_fn = nn.CrossEntropyLoss()
-# else:
-#     loss_fn = nn.BCEWithLogitsLoss()
+if labels.dim() == 1:
+    loss_fn = nn.CrossEntropyLoss()
+else:
+    loss_fn = nn.BCEWithLogitsLoss()
 
 
 if args.sample_method == 'ladies':
@@ -259,7 +261,9 @@ for oiter in range(args.runs):
                 output = susage.forward(feat_data[input_nodes], adjs)
                 if args.sample_method == 'full':
                     output = output[output_nodes]
-                loss_train = F.cross_entropy(output, labels[output_nodes])
+                if labels.dim() != 1:
+                    labels = labels.float()
+                loss_train = loss_fn(output, labels[output_nodes])
                 loss_train.backward()
                 torch.nn.utils.clip_grad_norm_(susage.parameters(), 0.2)
                 optimizer.step()
@@ -272,8 +276,30 @@ for oiter in range(args.runs):
         output = susage.forward(feat_data[input_nodes], adjs)
         if args.sample_method == 'full':
             output = output[output_nodes]
-        loss_valid = F.cross_entropy(output, labels[output_nodes]).detach().tolist()
-        valid_f1 = f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')
+        if labels.dim() != 1:
+            labels = labels.float()
+        loss_valid = loss_fn(output, labels[output_nodes]).detach().tolist()
+
+        if labels[output_nodes].dim() == 1:
+            predictions = output.argmax(dim=1).cpu()
+            targets = labels[output_nodes].cpu()
+            valid_f1 = f1_score(targets, predictions, average='micro')
+        else:
+            pred = output.cpu()
+            labl = labels.cpu()
+            y_pred = pred > 0
+            y_true = labl[output_nodes] > 0.5
+
+            tp = int((y_true & y_pred).sum())
+            fp = int((~y_true & y_pred).sum())
+            fn = int((y_true & ~y_pred).sum())
+
+            try:
+                precision = tp / (tp + fp)
+                recall = tp / (tp + fn)
+                valid_f1 = accuracy = 2 * (precision * recall) / (precision + recall)
+            except ZeroDivisionError:
+                valid_f1 = 0.
         print(("Epoch: %d (%.1fs) Train Loss: %.2f    Valid Loss: %.2f Valid F1: %.3f") %                   (epoch, np.sum(times), np.average(train_losses), loss_valid, valid_f1))
 
     #     if valid_f1 > best_val + 1e-2:
@@ -308,11 +334,30 @@ for oiter in range(args.runs):
     adjs, input_nodes, output_nodes = default_sampler(np.random.randint(2**32 - 1), batch_nodes,
                                     samp_num_list * 20, len(feat_data), lap_matrix, args.n_layers)
     adjs = package_mxl(adjs, device)
-    output = susage.forward(feat_data[input_nodes], adjs)[output_nodes]
-    test_f1s = [f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')]
+    output = susage.forward(feat_data[input_nodes], adjs)
+    if labels[output_nodes].dim() == 1:
+        predictions = output.argmax(dim=1)[output_nodes].cpu()
+        targets = labels[output_nodes].cpu()
+        test_f1s = f1_score(targets, predictions, average='micro')
+    else:
+        pred = output.cpu()
+        labl = labels.cpu()
+        y_pred = pred > 0
+        y_true = labl[output_nodes] > 0.5
+
+        tp = int((y_true & y_pred).sum())
+        fp = int((~y_true & y_pred).sum())
+        fn = int((y_true & ~y_pred).sum())
+
+        try:
+            precision = tp / (tp + fp)
+            recall = tp / (tp + fn)
+            f1 = accuracy = 2 * (precision * recall) / (precision + recall)
+        except ZeroDivisionError:
+            f1 = 0.
     
     print('Iteration: %d, Test F1: %.3f' % (oiter+1, np.average(test_f1s)))
-    results[oiter] = np.average(test_f1s)
+    results[oiter] = np.average([test_f1s])
 
 '''
     Visualize the train-test curve
