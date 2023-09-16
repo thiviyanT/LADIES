@@ -11,6 +11,7 @@ import sys
 import os
 from torch_geometric.datasets import Planetoid, Yelp, Flickr, Reddit2
 from torch_geometric.utils import to_undirected
+from ogb.nodeproppred import NodePropPredDataset
 
 
 def parse_index_file(filename):
@@ -67,9 +68,55 @@ def load_data(dataset_str, data_dir=None):
 
         return edges, labels, features, num_classes, idx_train, idx_val, idx_test
     elif dataset_str.lower() in ['ogbn-arxiv', 'arxiv']:
-        raise NotImplementedError
+        # Load the arxiv dataset
+        dataset = NodePropPredDataset(name="ogbn-arxiv")
+
+        split_idx = dataset.get_idx_split()
+        idx_train, idx_val, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
+
+        # Edge info
+        edge_index = dataset.graph['edge_index'].T
+        edges = edge_index
+
+        # Features and labels
+        features = dataset.graph['node_feat']
+        labels = dataset.labels.flatten()
+
+        # Standardize the features
+        train_feats = features[idx_train]
+        scaler = StandardScaler()
+        scaler.fit(train_feats)
+        features = scaler.transform(features)
+
+        # Num classes
+        num_classes = dataset.num_classes
+
+        return edges, labels, features, num_classes, idx_train, idx_val, idx_test
+
     elif dataset_str.lower() in ['ogbn-products', 'products']:
-        raise NotImplementedError
+        # Load the products dataset
+        dataset = NodePropPredDataset(name="ogbn-products")
+        split_idx = dataset.get_idx_split()
+        idx_train, idx_val, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
+
+        # Edge info
+        edge_index = dataset.graph['edge_index'].T
+        edges = edge_index
+
+        # Features and labels
+        features = dataset.graph['node_feat']
+        labels = dataset.labels.flatten()
+
+        # Standardize the features
+        train_feats = features[idx_train]
+        scaler = StandardScaler()
+        scaler.fit(train_feats)
+        features = scaler.transform(features)
+
+        # Num classes
+        num_classes = dataset.num_classes
+
+        return edges, labels, features, num_classes, idx_train, idx_val, idx_test
     elif dataset_str.lower() == 'ppi':
         prefix = './ppi/ppi'
         G_data = json.load(open(prefix + "-G.json"))

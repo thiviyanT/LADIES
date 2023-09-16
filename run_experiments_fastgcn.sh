@@ -9,7 +9,7 @@
 
 # Load any modules or source bashrc if necessary
 source ~/.bashrc
-conda activate pygeo39
+conda activate pygeo45
 
 module load cuda11.3/toolkit/11.3.1
 module load cuDNN/cuda11.1/8.0.5
@@ -29,7 +29,7 @@ if [ ! -f $output_file2 ]; then
 fi
 
 # Define the list of datasets
-datasets=("Cora" "CiteSeer" "PubMed" "Reddit" "Yelp" "Flickr")
+datasets=("Cora" "CiteSeer" "PubMed" "Reddit" "Yelp" "Flickr" "arxiv" "products")
 
 # Define the list of sampling numbers
 samp_nums=(32 64 128 256 512)
