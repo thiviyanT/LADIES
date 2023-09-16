@@ -9,27 +9,8 @@ from collections import defaultdict
 import networkx as nx
 import sys
 import os
-# from ogb.nodeproppred import NodePropPredDataset
-# import dgl
-
-
-# def load_ogb(name):
-#     # Load the dataset and split
-#     dataset = NodePropPredDataset(name=name)
-#     split_idx = dataset.get_idx_split()
-#     graph, label = dataset[0]
-#
-#     # Convert DGL graph to NetworkX graph for processing
-#     G = dgl.to_networkx(graph)
-#     features = graph.ndata['feat'].numpy()
-#     labels = label.numpy().flatten()
-#
-#     # Extract edges, degrees, and train/val/test split
-#     edges = np.array(graph.edges())
-#     degrees = np.array(G.degree())[:, 1]
-#     idx_train, idx_val, idx_test = split_idx["train"].numpy(), split_idx["valid"].numpy(), split_idx["test"].numpy()
-#
-#     return edges, labels, features, np.max(labels) + 1, idx_train, idx_val, idx_test
+from torch_geometric.datasets import Planetoid, Yelp, Flickr, Reddit2
+from torch_geometric.utils import to_undirected
 
 
 def parse_index_file(filename):
@@ -39,19 +20,54 @@ def parse_index_file(filename):
         index.append(int(line.strip()))
     return index
 
-def load_data(dataset_str):
 
-    if dataset_str == 'reddit':
-        raise NotImplementedError
-    if dataset_str == 'yelp':
-        raise NotImplementedError
-    if dataset_str == 'flickr':
-        raise NotImplementedError
+def load_torch_geom_data(dataset_name, root_dir):
+    """ """
+    if dataset_name.lower() in ['reddit', 'reddit2']:
+        data = Reddit2(root=root_dir)[0]
+    elif dataset_name.lower() == 'yelp':
+        data = Yelp(root=root_dir)[0]
+    elif dataset_name.lower() == 'flickr':
+        data = Flickr(root=root_dir)[0]
+    else:
+	    raise ValueError("Unknown dataset name. Supported datasets: reddit2, yelp, flickr")
 
-    if dataset_str == 'ogbn-arxiv' or dataset_str == 'ogbn-products':
-        return load_ogb(dataset_str)
-    
-    if dataset_str == 'ppi':
+    # Convert to undirected graph
+    edges = to_undirected(data.edge_index)
+    edges = edges.numpy().T  # convert to numpy in format (edge_start, edge_end)
+
+    # Features and Labels
+    feats = data.x.numpy()  # Convert to numpy
+    labels = data.y.numpy()
+
+    idx_train = data.train_mask.nonzero(as_tuple=False).squeeze().numpy()
+    idx_val = data.val_mask.nonzero(as_tuple=False).squeeze().numpy()
+    idx_test = data.test_mask.nonzero(as_tuple=False).squeeze().numpy()
+
+    train_feats = feats[idx_train]
+    scaler = StandardScaler()
+    scaler.fit(train_feats)
+    features = scaler.transform(feats)
+
+    # Num classes
+    num_classes = np.max(labels)+1
+
+    return np.array(edges), labels, features, num_classes, idx_train, idx_val, idx_test
+
+
+def load_data(dataset_str, data_dir=None):
+
+    if dataset_str.lower() in ['reddit', 'reddit2', 'yelp', 'flickr']:
+        assert data_dir is not None
+        edges, labels, features, num_classes, idx_train, idx_val, idx_test = load_torch_geom_data(dataset_str,
+                                                                                                  root_dir=f'{data_dir}/{dataset_str}')
+
+        return edges, labels, features, num_classes, idx_train, idx_val, idx_test
+    elif dataset_str.lower() in ['ogbn-arxiv', 'arxiv']:
+        raise NotImplementedError
+    elif dataset_str.lower() in ['ogbn-products', 'products']:
+        raise NotImplementedError
+    elif dataset_str.lower() == 'ppi':
         prefix = './ppi/ppi'
         G_data = json.load(open(prefix + "-G.json"))
         G = json_graph.node_link_graph(G_data)
@@ -121,50 +137,52 @@ def load_data(dataset_str):
         
         return np.array(edges), np.array(degrees), np.array(labels), np.array(features),\
                 np.array(idx_train), np.array(idx_val), np.array(idx_test)
-    
-    names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
-    objects = []
-    for i in range(len(names)):
-        with open("data/ind.{}.{}".format(dataset_str, names[i]), 'rb') as f:
-            if sys.version_info > (3, 0):
-                objects.append(pkl.load(f, encoding='latin1'))
-            else:
-                objects.append(pkl.load(f))
+    elif dataset_str.lower() in ['cora', 'pubmed', 'citeseer']:
+        names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
+        objects = []
+        for i in range(len(names)):
+            with open("data/ind.{}.{}".format(dataset_str, names[i]), 'rb') as f:
+                if sys.version_info > (3, 0):
+                    objects.append(pkl.load(f, encoding='latin1'))
+                else:
+                    objects.append(pkl.load(f))
 
-    x, y, tx, ty, allx, ally, graph = tuple(objects)
-    test_idx_reorder = parse_index_file("data/ind.{}.test.index".format(dataset_str))
-    test_idx_range = np.sort(test_idx_reorder)
+        x, y, tx, ty, allx, ally, graph = tuple(objects)
+        test_idx_reorder = parse_index_file("data/ind.{}.test.index".format(dataset_str))
+        test_idx_range = np.sort(test_idx_reorder)
 
-    if dataset_str == 'citeseer':
-        # Fix citeseer dataset (there are some isolated nodes in the graph)
-        # Find isolated nodes, add them as zero-vecs into the right position
-        test_idx_range_full = range(min(test_idx_reorder), max(test_idx_reorder)+1)
-        tx_extended = sp.lil_matrix((len(test_idx_range_full), x.shape[1]))
-        tx_extended[test_idx_range-min(test_idx_range), :] = tx
-        tx = tx_extended
-        ty_extended = np.zeros((len(test_idx_range_full), y.shape[1]))
-        ty_extended[test_idx_range-min(test_idx_range), :] = ty
-        ty = ty_extended
+        if dataset_str == 'citeseer':
+            # Fix citeseer dataset (there are some isolated nodes in the graph)
+            # Find isolated nodes, add them as zero-vecs into the right position
+            test_idx_range_full = range(min(test_idx_reorder), max(test_idx_reorder)+1)
+            tx_extended = sp.lil_matrix((len(test_idx_range_full), x.shape[1]))
+            tx_extended[test_idx_range-min(test_idx_range), :] = tx
+            tx = tx_extended
+            ty_extended = np.zeros((len(test_idx_range_full), y.shape[1]))
+            ty_extended[test_idx_range-min(test_idx_range), :] = ty
+            ty = ty_extended
 
-    features = sp.vstack((allx, tx)).tolil()
-    features[test_idx_reorder, :] = features[test_idx_range, :]
+        features = sp.vstack((allx, tx)).tolil()
+        features[test_idx_reorder, :] = features[test_idx_range, :]
 
-    labels = np.vstack((ally, ty))
-    labels[test_idx_reorder, :] = labels[test_idx_range, :]
+        labels = np.vstack((ally, ty))
+        labels[test_idx_reorder, :] = labels[test_idx_range, :]
 
-    idx_test = np.array(test_idx_range.tolist())
-    idx_train = np.array(range(len(y)))
-    idx_val = np.array(range(len(y), len(y)+500))
+        idx_test = np.array(test_idx_range.tolist())
+        idx_train = np.array(range(len(y)))
+        idx_val = np.array(range(len(y), len(y)+500))
 
+        degrees = np.zeros(len(labels), dtype=np.int64)
+        edges = []
+        for s in graph:
+            for t in graph[s]:
+                edges += [[s, t]]
+            degrees[s] = len(graph[s])
+        labels = np.argmax(labels, axis=1)
+        return np.array(edges), labels, features, np.max(labels)+1,  idx_train, idx_val, idx_test
+    else:
+        raise NotImplementedError()
 
-    degrees = np.zeros(len(labels), dtype=np.int64)
-    edges = []
-    for s in graph:
-        for t in graph[s]:
-            edges += [[s, t]]
-        degrees[s] = len(graph[s])
-    labels = np.argmax(labels, axis=1)
-    return np.array(edges), labels, features, np.max(labels)+1,  idx_train, idx_val, idx_test
 
 def load_cora():
     num_nodes = 2708

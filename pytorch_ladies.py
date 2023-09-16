@@ -21,6 +21,8 @@ parser = argparse.ArgumentParser(description='Training GCN on Cora/CiteSeer/PubM
 '''
     Dataset arguments
 '''
+parser.add_argument('--data_dir', type=str, default='.',
+                    help='Dataset directory')
 parser.add_argument('--dataset', type=str, default='reddit',
                     help='Dataset name: Cora/CiteSeer/PubMed/Reddit/Yelp/Flickr/Arxiv/Products')
 parser.add_argument('--nhid', type=int, default=256,
@@ -160,9 +162,13 @@ def ladies_sampler(seed, batch_nodes, samp_num_list, num_nodes, lap_matrix, dept
     #     Reverse the sampled probability from bottom to top. Only require input how the lastly sampled nodes.
     adjs.reverse()
     return adjs, previous_nodes, batch_nodes
+
+
 def default_sampler(seed, batch_nodes, samp_num_list, num_nodes, lap_matrix, depth):
     mx = sparse_mx_to_torch_sparse_tensor(lap_matrix)
     return [mx for i in range(depth)], np.arange(num_nodes), batch_nodes
+
+
 def prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_list, num_nodes, lap_matrix, depth):
     jobs = []
     for _ in process_ids:
@@ -175,9 +181,10 @@ def prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_
     p = pool.apply_async(sampler, args=(np.random.randint(2**32 - 1), batch_nodes,                                                samp_num_list * 20, num_nodes, lap_matrix, depth))
     jobs.append(p)
     return jobs
+
+
 def package_mxl(mxl, device):
     return [torch.sparse.FloatTensor(mx[0], mx[1], mx[2]).to(device) for mx in mxl]
-
 
 
 if args.cuda != -1 and torch.cuda.is_available():
@@ -187,7 +194,7 @@ else:
     
     
 print(args.dataset, args.sample_method)
-edges, labels, feat_data, num_classes, train_nodes, valid_nodes, test_nodes = load_data(args.dataset)
+edges, labels, feat_data, num_classes, train_nodes, valid_nodes, test_nodes = load_data(args.dataset, data_dir=args.data_dir)
 
 adj_matrix = get_adj(edges, feat_data.shape[0])
 
@@ -196,8 +203,12 @@ if type(feat_data) == scipy.sparse.lil.lil_matrix:
     feat_data = torch.FloatTensor(feat_data.todense()).to(device) 
 else:
     feat_data = torch.FloatTensor(feat_data).to(device)
-labels    = torch.LongTensor(labels).to(device) 
+labels = torch.LongTensor(labels).to(device)
 
+# if labels.dim() == 1:
+#     loss_fn = nn.CrossEntropyLoss()
+# else:
+#     loss_fn = nn.BCEWithLogitsLoss()
 
 
 if args.sample_method == 'ladies':

@@ -29,7 +29,7 @@ if [ ! -f $output_file2 ]; then
 fi
 
 # Define the list of datasets
-datasets=("Cora" "CiteSeer" "PubMed")
+datasets=("Cora" "CiteSeer" "PubMed" "Reddit" "Yelp" "Flickr")
 
 # Define the list of sampling numbers
 samp_nums=(32 64 128 256 512)
@@ -39,14 +39,14 @@ for dataset in "${datasets[@]}"; do
     echo -e "\n\nProcessing ${dataset}\n\n"
 
     # Experiment 1
-    python pytorch_ladies.py --cuda 0 --dataset "${dataset,,}" --runs 10 --sample_method ${method} > ${dataset}_${method}_exp1.output
+    python pytorch_ladies.py --cuda 0 --dataset "${dataset,,}" --runs 10 --sample_method ${method} --data_dir /var/scratch/tsingam/ > ${dataset}_${method}_exp1.output
 
     accuracy=$(grep -Eo "Mini Acc: [0-9.]+ ± [0-9.]+" ${dataset}_${method}_exp1.output)
     echo "$method,$dataset,$accuracy" >> $output_file1
 
     # Experiment 2
     for samp_num in "${samp_nums[@]}"; do
-        python3 pytorch_ladies.py --cuda 0 --dataset "${dataset,,}" --sample_method ${method} --samp_num "$samp_num" > ${dataset}_${method}_exp2.output
+        python3 pytorch_ladies.py --cuda 0 --dataset "${dataset,,}" --sample_method ${method} --samp_num "$samp_num" --data_dir /var/scratch/tsingam/ > ${dataset}_${method}_exp2.output
 
         accuracy=$(grep -Eo "Mini Acc: [0-9.]+ " ${dataset}_${method}_exp2.output | awk '{print $3}')
         echo "$method,$dataset,$samp_num,$accuracy" >> $output_file2
