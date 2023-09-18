@@ -340,7 +340,7 @@ for oiter in range(args.runs):
         targets = labels[output_nodes].cpu()
         test_f1s = f1_score(targets, predictions, average='micro')
     else:
-        pred = output.cpu()
+        pred = output[output_nodes].cpu()
         labl = labels.cpu()
         y_pred = pred > 0
         y_true = labl[output_nodes] > 0.5
@@ -352,9 +352,9 @@ for oiter in range(args.runs):
         try:
             precision = tp / (tp + fp)
             recall = tp / (tp + fn)
-            f1 = accuracy = 2 * (precision * recall) / (precision + recall)
+            test_f1s = accuracy = 2 * (precision * recall) / (precision + recall)
         except ZeroDivisionError:
-            f1 = 0.
+            test_f1s = 0.
     
     print('Iteration: %d, Test F1: %.3f' % (oiter+1, np.average(test_f1s)))
     results[oiter] = np.average([test_f1s])

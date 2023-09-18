@@ -29,7 +29,8 @@ if [ ! -f $output_file2 ]; then
 fi
 
 # Define the list of datasets
-datasets=("Cora" "CiteSeer" "PubMed" "Reddit" "Yelp" "Flickr" "arxiv" "products")
+# datasets=("Cora" "CiteSeer" "PubMed" "Reddit" "Yelp" "Flickr" "arxiv" "products")
+datasets=("Yelp")
 
 # Define the list of sampling numbers
 samp_nums=(32 64 128 256 512)
