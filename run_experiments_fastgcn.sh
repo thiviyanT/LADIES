@@ -30,7 +30,7 @@ fi
 
 # Define the list of datasets
 # datasets=("Cora" "CiteSeer" "PubMed" "Reddit" "Yelp" "Flickr" "arxiv" "products")
-datasets=("Yelp")
+datasets=("Cora" "CiteSeer" "PubMed")
 
 # Define the list of sampling numbers
 samp_nums=(32 64 128 256 512)

@@ -107,3 +107,13 @@ GraphSAINT,OGB-products,64,60.46
 GraphSAINT,OGB-products,128,60.84
 GraphSAINT,OGB-products,256,62.79
 GraphSAINT,OGB-products,512,62.96
+Ladies,Yelp,32,44.95
+Ladies,Yelp,64,40.46
+Ladies,Yelp,128,38.27
+Ladies,Yelp,256,27.27
+Ladies,Yelp,512,23.49
+FastGCN,Yelp,32,28.73
+FastGCN,Yelp,64,21.02
+FastGCN,Yelp,128,20.40
+FastGCN,Yelp,256,19.31
+FastGCN,Yelp,512,27.20

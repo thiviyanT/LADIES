@@ -45,6 +45,11 @@ n_rows = n_datasets // n_cols
 if n_datasets % n_cols:
     n_rows += 1
 
+ordered_datasets = ['Cora', 'CiteSeer', 'PubMed', 'Reddit', 'Flickr', 'Yelp', 'OGB-arxiv', 'OGB-products']
+
+# Assuming that the datasets in "ordered_datasets" are a subset of "unique_datasets"
+# assert set(ordered_datasets).issubset(unique_datasets), "Some datasets in 'ordered_datasets' not found in 'unique_datasets'"
+
 with plt.style.context('science'):
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows))
 
@@ -52,7 +57,7 @@ with plt.style.context('science'):
     if n_datasets == 1:
         axes = np.array([axes])
 
-    for ax, dataset in zip(axes.flatten(), unique_datasets):
+    for ax, dataset in zip(axes.flatten(), ordered_datasets):
         for model, datasets in data.items():
             if dataset in datasets:
                 x = []
@@ -66,9 +71,7 @@ with plt.style.context('science'):
                     y.append(accuracy)
                 ax.plot(x, y, label=model, marker='o', color=colors[model])
 
-        ax.set_title(f"{dataset}", fontsize=18)
-        # ax.set_xlabel('Number of Samples')
-        # ax.set_ylabel('Classification Accuracy (%)')
+        ax.set_title(f"{dataset}", fontsize=20, fontweight='bold')
         ax.legend()
         ax.grid(True)
         ax.set_xticks([32, 64, 128, 256, 512, all_placeholder])
@@ -82,3 +85,4 @@ with plt.style.context('science'):
     plt.tight_layout()
     plt.savefig("sampling_vs_accuracy.pdf", format='pdf', bbox_inches='tight')
     plt.show()
+
