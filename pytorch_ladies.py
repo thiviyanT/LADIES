@@ -45,6 +45,8 @@ parser.add_argument('--cuda', type=int, default=0,
                     help='Avaiable GPU ID')
 parser.add_argument('--runs', type=int, default=1,
                     help='Number of runs')
+parser.add_argument('--dropout', type=float, default=0.0,
+                    help='Dropout rate')
 
 
 args = parser.parse_args()
@@ -210,8 +212,8 @@ samp_num_list = np.array([args.samp_num, args.samp_num, args.samp_num, args.samp
 
 results = torch.empty(args.runs)
 for oiter in range(args.runs):
-    encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, nclasses=num_classes,layers=args.n_layers, dropout = 0.2).to(device)
-    susage  = SuGCN(encoder = encoder, num_classes=num_classes, dropout=0.5, inp = feat_data.shape[1])
+    encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, nclasses=num_classes,layers=args.n_layers, dropout = args.dropout).to(device)
+    susage  = SuGCN(encoder = encoder, num_classes=num_classes, dropout= args.dropout, inp = feat_data.shape[1])
     susage.to(device)
 
     optimizer = optim.Adam(filter(lambda p : p.requires_grad, susage.parameters()))
@@ -356,4 +358,3 @@ for oiter in range(args.runs):
 print('-' * 10)
 print(f'Number of runs: {args.runs}')
 print(f'Mini Acc: {100 * results.mean():.2f} ± {100 * results.std():.2f}')
-
