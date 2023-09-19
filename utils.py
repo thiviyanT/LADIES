@@ -24,31 +24,35 @@ def parse_index_file(filename):
 
 def load_torch_geom_data(dataset_name, root_dir):
     """ """
-    if dataset_name.lower() in ['reddit', 'reddit2']:
+    if dataset_name.lower() == 'cora':
+        data = Planetoid(root=root_dir, name='Cora', split='full')[0]
+    elif dataset_name.lower() == 'citeseer':
+        data = Planetoid(root=root_dir, name='CiteSeer', split='full')[0]
+    elif dataset_name.lower() == 'pubmed':
+        data = Planetoid(root=root_dir, name='PubMed', split='full')[0]
+    elif dataset_name.lower() == 'reddit':
         data = Reddit2(root=root_dir)[0]
     elif dataset_name.lower() == 'yelp':
         data = Yelp(root=root_dir)[0]
     elif dataset_name.lower() == 'flickr':
         data = Flickr(root=root_dir)[0]
     else:
-	    raise ValueError("Unknown dataset name. Supported datasets: reddit2, yelp, flickr")
+	    raise ValueError("Unknown dataset name. Supported datasets: reddit, yelp, flickr")
 
     # Convert to undirected graph
     edges = to_undirected(data.edge_index)
     edges = edges.numpy().T  # convert to numpy in format (edge_start, edge_end)
 
     # Features and Labels
-    feats = data.x.numpy()  # Convert to numpy
+    features = data.x.numpy()  # Convert to numpy
     labels = data.y.numpy()
 
     idx_train = data.train_mask.nonzero(as_tuple=False).squeeze().numpy()
     idx_val = data.val_mask.nonzero(as_tuple=False).squeeze().numpy()
     idx_test = data.test_mask.nonzero(as_tuple=False).squeeze().numpy()
 
-    train_feats = feats[idx_train]
-    scaler = StandardScaler()
-    scaler.fit(train_feats)
-    features = scaler.transform(feats)
+    if dataset_name.lower() in ['reddit', 'yelp']:
+        features = (features - features.mean(axis=0)) / features.std(axis=0)
 
     # Num classes
     if labels.ndim == 1:
@@ -61,7 +65,7 @@ def load_torch_geom_data(dataset_name, root_dir):
 
 def load_data(dataset_str, data_dir=None):
 
-    if dataset_str.lower() in ['reddit', 'reddit2', 'yelp', 'flickr']:
+    if dataset_str.lower() in ['cora', 'citeseer', 'pubmed', 'reddit', 'yelp', 'flickr']:
         assert data_dir is not None
         edges, labels, features, num_classes, idx_train, idx_val, idx_test = load_torch_geom_data(dataset_str,
                                                                                                   root_dir=f'{data_dir}/{dataset_str}')
@@ -83,10 +87,10 @@ def load_data(dataset_str, data_dir=None):
         labels = dataset.labels.flatten()
 
         # Standardize the features
-        train_feats = features[idx_train]
-        scaler = StandardScaler()
-        scaler.fit(train_feats)
-        features = scaler.transform(features)
+        # train_feats = features[idx_train]
+        # scaler = StandardScaler()
+        # scaler.fit(train_feats)
+        # features = scaler.transform(features)
 
         # Num classes
         num_classes = dataset.num_classes
@@ -108,10 +112,10 @@ def load_data(dataset_str, data_dir=None):
         labels = dataset.labels.flatten()
 
         # Standardize the features
-        train_feats = features[idx_train]
-        scaler = StandardScaler()
-        scaler.fit(train_feats)
-        features = scaler.transform(features)
+        # train_feats = features[idx_train]
+        # scaler = StandardScaler()
+        # scaler.fit(train_feats)
+        # features = scaler.transform(features)
 
         # Num classes
         num_classes = dataset.num_classes
@@ -187,49 +191,49 @@ def load_data(dataset_str, data_dir=None):
         
         return np.array(edges), np.array(degrees), np.array(labels), np.array(features),\
                 np.array(idx_train), np.array(idx_val), np.array(idx_test)
-    elif dataset_str.lower() in ['cora', 'pubmed', 'citeseer']:
-        names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
-        objects = []
-        for i in range(len(names)):
-            with open("data/ind.{}.{}".format(dataset_str, names[i]), 'rb') as f:
-                if sys.version_info > (3, 0):
-                    objects.append(pkl.load(f, encoding='latin1'))
-                else:
-                    objects.append(pkl.load(f))
-
-        x, y, tx, ty, allx, ally, graph = tuple(objects)
-        test_idx_reorder = parse_index_file("data/ind.{}.test.index".format(dataset_str))
-        test_idx_range = np.sort(test_idx_reorder)
-
-        if dataset_str == 'citeseer':
-            # Fix citeseer dataset (there are some isolated nodes in the graph)
-            # Find isolated nodes, add them as zero-vecs into the right position
-            test_idx_range_full = range(min(test_idx_reorder), max(test_idx_reorder)+1)
-            tx_extended = sp.lil_matrix((len(test_idx_range_full), x.shape[1]))
-            tx_extended[test_idx_range-min(test_idx_range), :] = tx
-            tx = tx_extended
-            ty_extended = np.zeros((len(test_idx_range_full), y.shape[1]))
-            ty_extended[test_idx_range-min(test_idx_range), :] = ty
-            ty = ty_extended
-
-        features = sp.vstack((allx, tx)).tolil()
-        features[test_idx_reorder, :] = features[test_idx_range, :]
-
-        labels = np.vstack((ally, ty))
-        labels[test_idx_reorder, :] = labels[test_idx_range, :]
-
-        idx_test = np.array(test_idx_range.tolist())
-        idx_train = np.array(range(len(y)))
-        idx_val = np.array(range(len(y), len(y)+500))
-
-        degrees = np.zeros(len(labels), dtype=np.int64)
-        edges = []
-        for s in graph:
-            for t in graph[s]:
-                edges += [[s, t]]
-            degrees[s] = len(graph[s])
-        labels = np.argmax(labels, axis=1)
-        return np.array(edges), labels, features, np.max(labels)+1,  idx_train, idx_val, idx_test
+    # elif dataset_str.lower() in ['cora', 'pubmed', 'citeseer']:
+    #     names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
+    #     objects = []
+    #     for i in range(len(names)):
+    #         with open("data/ind.{}.{}".format(dataset_str, names[i]), 'rb') as f:
+    #             if sys.version_info > (3, 0):
+    #                 objects.append(pkl.load(f, encoding='latin1'))
+    #             else:
+    #                 objects.append(pkl.load(f))
+    #
+    #     x, y, tx, ty, allx, ally, graph = tuple(objects)
+    #     test_idx_reorder = parse_index_file("data/ind.{}.test.index".format(dataset_str))
+    #     test_idx_range = np.sort(test_idx_reorder)
+    #
+    #     if dataset_str == 'citeseer':
+    #         # Fix citeseer dataset (there are some isolated nodes in the graph)
+    #         # Find isolated nodes, add them as zero-vecs into the right position
+    #         test_idx_range_full = range(min(test_idx_reorder), max(test_idx_reorder)+1)
+    #         tx_extended = sp.lil_matrix((len(test_idx_range_full), x.shape[1]))
+    #         tx_extended[test_idx_range-min(test_idx_range), :] = tx
+    #         tx = tx_extended
+    #         ty_extended = np.zeros((len(test_idx_range_full), y.shape[1]))
+    #         ty_extended[test_idx_range-min(test_idx_range), :] = ty
+    #         ty = ty_extended
+    #
+    #     features = sp.vstack((allx, tx)).tolil()
+    #     features[test_idx_reorder, :] = features[test_idx_range, :]
+    #
+    #     labels = np.vstack((ally, ty))
+    #     labels[test_idx_reorder, :] = labels[test_idx_range, :]
+    #
+    #     idx_test = np.array(test_idx_range.tolist())
+    #     idx_train = np.array(range(len(y)))
+    #     idx_val = np.array(range(len(y), len(y)+500))
+    #
+    #     degrees = np.zeros(len(labels), dtype=np.int64)
+    #     edges = []
+    #     for s in graph:
+    #         for t in graph[s]:
+    #             edges += [[s, t]]
+    #         degrees[s] = len(graph[s])
+    #     labels = np.argmax(labels, axis=1)
+    #     return np.array(edges), labels, features, np.max(labels)+1,  idx_train, idx_val, idx_test
     else:
         raise NotImplementedError()
 

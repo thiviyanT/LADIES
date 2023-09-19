@@ -24,10 +24,11 @@ for index, row in dataframe.iterrows():
 
 # Colors for models
 colors = {
-    'Ladies': 'red',
+    'Ladies': 'yellow',
     'FastGCN': 'green',
     'GAS': 'blue',
-    'GraphSAINT': 'orange'
+    'GraphSAINT': 'orange',
+    'GSGF': 'red',
 }
 
 # Placeholder for 'All'

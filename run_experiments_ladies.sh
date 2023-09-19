@@ -4,6 +4,7 @@
 #SBATCH --time=48:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --job-name=ladies
+#SBATCH --cpus-per-task=10
 #SBATCH --output=ladies_output.%j.out
 #SBATCH --error=ladies_error.%j.err
 
@@ -29,8 +30,7 @@ if [ ! -f $output_file2 ]; then
 fi
 
 # Define the list of datasets
-#datasets=("Cora" "CiteSeer" "PubMed" "Reddit" "Yelp" "Flickr" "arxiv" "products")
-datasets=("Cora" "CiteSeer" "PubMed")
+datasets=("Cora" "CiteSeer" "PubMed" "Reddit" "Yelp" "Flickr" "arxiv" "products")
 
 # Define the list of sampling numbers
 samp_nums=(32 64 128 256 512)

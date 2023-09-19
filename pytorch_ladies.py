@@ -4,7 +4,6 @@
 from utils import *
 import argparse
 import scipy
-# import multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -30,8 +29,6 @@ parser.add_argument('--nhid', type=int, default=256,
                     help='Hidden state dimension')
 parser.add_argument('--epoch_num', type=int, default= 100,
                     help='Number of Epoch')
-parser.add_argument('--pool_num', type=int, default= 1,
-                    help='Number of Pool')
 parser.add_argument('--batch_size', type=int, default=256,
                     help='size of output node in a batch')
 parser.add_argument('--n_layers', type=int, default=2,
@@ -50,7 +47,6 @@ parser.add_argument('--runs', type=int, default=1,
                     help='Number of runs')
 
 
-
 args = parser.parse_args()
 
 
@@ -66,7 +62,7 @@ class GraphConvolution(nn.Module):
 
 
 class GCN(nn.Module):
-    def __init__(self, nfeat, nhid, layers, dropout):
+    def __init__(self, nfeat, nhid, nclasses, layers, dropout):
         super(GCN, self).__init__()
         self.layers = layers
         self.nhid = nhid
@@ -74,7 +70,7 @@ class GCN(nn.Module):
         self.gcs.append(GraphConvolution(nfeat,  nhid))
         self.dropout = nn.Dropout(dropout)
         for i in range(layers-1):
-            self.gcs.append(GraphConvolution(nhid,  nhid))
+            self.gcs.append(GraphConvolution(nhid,  nclasses))
 
     def forward(self, x, adjs):
         '''
@@ -90,13 +86,13 @@ class SuGCN(nn.Module):
     def __init__(self, encoder, num_classes, dropout, inp):
         super(SuGCN, self).__init__()
         self.encoder = encoder
-        self.dropout = nn.Dropout(dropout)
-        self.linear = nn.Linear(self.encoder.nhid, num_classes)
+        # self.dropout = nn.Dropout(dropout)
+        # self.linear = nn.Linear(self.encoder.nhid, num_classes)
 
     def forward(self, feat, adjs):
         x = self.encoder(feat, adjs)
-        x = self.dropout(x)
-        x = self.linear(x)
+        # x = self.dropout(x)
+        # x = self.linear(x)
         return x
 
 
@@ -214,7 +210,7 @@ samp_num_list = np.array([args.samp_num, args.samp_num, args.samp_num, args.samp
 
 results = torch.empty(args.runs)
 for oiter in range(args.runs):
-    encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, layers=args.n_layers, dropout = 0.2).to(device)
+    encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, nclasses=num_classes,layers=args.n_layers, dropout = 0.2).to(device)
     susage  = SuGCN(encoder = encoder, num_classes=num_classes, dropout=0.5, inp = feat_data.shape[1])
     susage.to(device)
 
@@ -225,33 +221,49 @@ for oiter in range(args.runs):
     times = []
     res   = []
     print('-' * 10)
+
+    num_batches = len(train_nodes) // args.batch_size if len(train_nodes) // args.batch_size != 0 else 1
+
     for epoch in np.arange(args.epoch_num):
         susage.train()
         train_losses = []
-        '''
-            Use CPU-GPU cooperation to reduce the overhead for sampling. (conduct sampling while training)
-        '''
-        adjs, input_nodes, output_nodes = prepare_data_unparallel(sampler, train_nodes, samp_num_list, len(feat_data), lap_matrix, args.n_layers)
-        valid_data = prepare_data_unparallel(sampler, valid_nodes, samp_num_list, len(feat_data), lap_matrix, args.n_layers)
 
-        for _iter in range(args.n_iters):
-            adjs = package_mxl(adjs, device)
-            optimizer.zero_grad()
-            t1 = time.time()
-            susage.train()
-            output = susage.forward(feat_data[input_nodes], adjs)
-            if args.sample_method == 'full':
-                output = output[output_nodes]
-            if labels.dim() != 1:
-                labels = labels.float()
-            loss_train = loss_fn(output, labels[output_nodes])
-            loss_train.backward()
-            torch.nn.utils.clip_grad_norm_(susage.parameters(), 0.2)
-            optimizer.step()
-            times += [time.time() - t1]
-            train_losses += [loss_train.detach().tolist()]
-            del loss_train
+        for i in range(num_batches):
+            # Get the current mini-batch
+            start_idx = i * args.batch_size
+            end_idx = start_idx + args.batch_size
+            train_batch_nodes = train_nodes[start_idx:end_idx]
+            adjs, input_nodes, output_nodes = prepare_data_unparallel(sampler,train_batch_nodes,samp_num_list,len(feat_data),lap_matrix,args.n_layers)
 
+            # Training
+            for _iter in range(args.n_iters):
+                adjs = package_mxl(adjs, device)
+                optimizer.zero_grad()
+                t1 = time.time()
+                susage.train()
+                output = susage.forward(feat_data[input_nodes], adjs)
+                if args.sample_method == 'full':
+                    output = output[output_nodes]
+                if labels.dim() != 1:
+                    labels = labels.float()
+                loss_train = loss_fn(output, labels[output_nodes])
+                loss_train.backward()
+                torch.nn.utils.clip_grad_norm_(susage.parameters(), 0.2)
+                optimizer.step()
+                times += [time.time() - t1]
+                train_losses += [loss_train.detach().tolist()]
+                del loss_train
+
+        idx = torch.randperm(len(valid_nodes))[:args.batch_size]
+        valid_batch_nodes = valid_nodes[idx]
+        valid_data = prepare_data_unparallel(sampler,
+                                             valid_batch_nodes,
+                                             samp_num_list,
+                                             len(feat_data),
+                                             lap_matrix,
+                                             args.n_layers)
+
+        # Evaluation
         susage.eval()
         adjs, input_nodes, output_nodes = valid_data
         adjs = package_mxl(adjs, device)
