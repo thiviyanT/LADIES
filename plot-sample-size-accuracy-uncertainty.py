@@ -7,11 +7,31 @@ plt.style.use('science')
 # Read data from CSV
 dataframe = pd.read_csv("results.csv")
 
+remap_methods = {
+    'ladies': 'Ladies',
+    'fastgcn': 'FastGCN',
+    'gas': 'GAS',
+    'graphsaint': 'GraphSAINT',
+    'gsgf': 'GRAPES',
+}
+
+remap_datasets = {
+    'cora': 'Cora',
+    'citeseer': 'Citeseer',
+    'pubmed': 'Pubmed',
+    'reddit': 'Reddit',
+    'flickr': 'Flickr',
+    'yelp': 'Yelp',
+    'ogb-arxiv': 'ogbn-arxiv',
+    'ogb-products': 'ogbn-products',
+}
+
 # Create a dictionary from the dataframe
 data = {}
 for index, row in dataframe.iterrows():
-    model = row['Method']
-    dataset = row['Dataset']
+
+    model = remap_methods[row['Method'].lower()]
+    dataset = remap_datasets[row['Dataset'].lower()]
     sample = row['Sampling Number']
     accuracy = float(row['Accuracy'])
 
@@ -24,11 +44,11 @@ for index, row in dataframe.iterrows():
 
 # Colors for models
 colors = {
-    'Ladies': 'yellow',
+    'Ladies': 'black',
     'FastGCN': 'green',
-    'GAS': 'blue',
+    'GAS': 'red',
     'GraphSAINT': 'orange',
-    'GSGF': 'red',
+    'GRAPES': '#4040FF',
 }
 
 # Placeholder for 'All'
@@ -46,10 +66,7 @@ n_rows = n_datasets // n_cols
 if n_datasets % n_cols:
     n_rows += 1
 
-ordered_datasets = ['Cora', 'CiteSeer', 'PubMed', 'Reddit', 'Flickr', 'Yelp', 'OGB-arxiv', 'OGB-products']
-
-# Assuming that the datasets in "ordered_datasets" are a subset of "unique_datasets"
-# assert set(ordered_datasets).issubset(unique_datasets), "Some datasets in 'ordered_datasets' not found in 'unique_datasets'"
+ordered_datasets = ['Cora', 'Citeseer', 'Pubmed', 'Reddit', 'Flickr', 'Yelp', 'ogbn-arxiv', 'ogbn-products']
 
 with plt.style.context('science'):
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows))
@@ -70,10 +87,11 @@ with plt.style.context('science'):
                         sample = int(sample)
                     x.append(sample)
                     y.append(accuracy)
-                ax.plot(x, y, label=model, marker='o', color=colors[model])
+                ax.plot(x, y, label=model, marker='o', color=colors[model], linewidth=2.0)
 
         ax.set_title(f"{dataset}", fontsize=20, fontweight='bold')
-        ax.legend()
+        if dataset == 'Reddit':
+            ax.legend()
         ax.grid(True)
         ax.set_xticks([32, 64, 128, 256, 512, all_placeholder])
         ax.set_xticklabels([32, 64, 128, 256, 512, 'All'], rotation=90, fontsize=10)
