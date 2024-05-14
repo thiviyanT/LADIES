@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-
+import pdb
 from utils import *
 import argparse
 import scipy
@@ -47,7 +47,12 @@ parser.add_argument('--runs', type=int, default=1,
                     help='Number of runs')
 parser.add_argument('--dropout', type=float, default=0.0,
                     help='Dropout rate')
-
+parser.add_argument('--lr', type=float, default=0.001,
+                    help='Learning rate')
+parser.add_argument('--embed_nodes', type=bool, default=False,
+                    help='training the node embeddings')
+parser.add_argument('--node_emb_dim', type=float, default=64,
+                    help='node embeddings dimension')
 
 args = parser.parse_args()
 
@@ -138,6 +143,7 @@ def ladies_sampler(seed, batch_nodes, samp_num_list, num_nodes, lap_matrix, dept
     np.random.seed(seed)
     previous_nodes = batch_nodes
     adjs  = []
+    #pdb.set_trace()
     '''
         Sample nodes from top to bottom, based on the probability computed adaptively (layer-dependent).
     '''
@@ -169,7 +175,7 @@ def default_sampler(seed, batch_nodes, samp_num_list, num_nodes, lap_matrix, dep
 
 
 def prepare_data_unparallel(sampler, train_nodes, samp_num_list, num_nodes, lap_matrix, depth):
-    adjs, previous_nodes, batch_nodes = sampler(np.random.randint(2**32 - 1), train_nodes, samp_num_list * 20, num_nodes, lap_matrix, depth)
+    adjs, previous_nodes, batch_nodes = sampler(np.random.randint(2**32 - 1), train_nodes, samp_num_list, num_nodes, lap_matrix, depth)
     return adjs, previous_nodes, batch_nodes
 
 
@@ -189,6 +195,16 @@ edges, labels, feat_data, num_classes, train_nodes, valid_nodes, test_nodes = lo
 adj_matrix = get_adj(edges, feat_data.shape[0])
 
 lap_matrix = row_normalize(adj_matrix + sp.eye(adj_matrix.shape[0]))
+
+embedding_params = []
+if args.embed_nodes:
+    print(f'Using learned node embeddings for features')
+    embeddings = torch.FloatTensor(data.num_nodes, args.node_emb_dim)
+    nn.init.normal_(embeddings)
+    embeddings = nn.Parameter(embeddings, requires_grad=True)
+    feat_data = embeddings
+    embedding_params.append(embeddings)
+
 if type(feat_data) == scipy.sparse.lil.lil_matrix:
     feat_data = torch.FloatTensor(feat_data.todense()).to(device) 
 else:
@@ -210,13 +226,14 @@ elif args.sample_method == 'full':
 
 samp_num_list = np.array([args.samp_num, args.samp_num, args.samp_num, args.samp_num, args.samp_num])
 
+
 results = torch.empty(args.runs)
 for oiter in range(args.runs):
     encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, nclasses=num_classes,layers=args.n_layers, dropout = args.dropout).to(device)
     susage  = SuGCN(encoder = encoder, num_classes=num_classes, dropout= args.dropout, inp = feat_data.shape[1])
     susage.to(device)
-
-    optimizer = optim.Adam(filter(lambda p : p.requires_grad, susage.parameters()))
+    
+    optimizer = optim.Adam(filter(lambda p : p.requires_grad, list(susage.parameters()) + embedding_params), lr=args.lr)
     best_val = 0
     best_tst = -1
     cnt = 0
@@ -235,6 +252,7 @@ for oiter in range(args.runs):
             start_idx = i * args.batch_size
             end_idx = start_idx + args.batch_size
             train_batch_nodes = train_nodes[start_idx:end_idx]
+            #print('batch_number:', i) #pdb.set_trace()
             adjs, input_nodes, output_nodes = prepare_data_unparallel(sampler,train_batch_nodes,samp_num_list,len(feat_data),lap_matrix,args.n_layers)
 
             # Training
@@ -258,20 +276,19 @@ for oiter in range(args.runs):
 
         idx = torch.randperm(len(valid_nodes))[:args.batch_size]
         valid_batch_nodes = valid_nodes[idx]
-        valid_data = prepare_data_unparallel(sampler,
-                                             valid_batch_nodes,
-                                             samp_num_list,
-                                             len(feat_data),
-                                             lap_matrix,
-                                             args.n_layers)
+        valid_data = default_sampler(np.random.randint(2**32 - 1),
+                                     valid_batch_nodes,
+                                     samp_num_list*20,
+                                     len(feat_data),
+                                     lap_matrix,
+                                     args.n_layers)
 
         # Evaluation
         susage.eval()
         adjs, input_nodes, output_nodes = valid_data
         adjs = package_mxl(adjs, device)
         output = susage.forward(feat_data[input_nodes], adjs)
-        if args.sample_method == 'full':
-            output = output[output_nodes]
+        output = output[output_nodes]
         if labels.dim() != 1:
             labels = labels.float()
         loss_valid = loss_fn(output, labels[output_nodes]).detach().tolist()
@@ -297,7 +314,7 @@ for oiter in range(args.runs):
             except ZeroDivisionError:
                 valid_f1 = 0.
         print(("Epoch: %d (%.1fs) Train Loss: %.2f    Valid Loss: %.2f Valid F1: %.3f") %                   (epoch, np.sum(times), np.average(train_losses), loss_valid, valid_f1))
-
+    print(f'Final Val Acc: {100*valid_f1:.2f}')
     #     if valid_f1 > best_val + 1e-2:
     #         best_val = valid_f1
     #         torch.save(susage, './save/best_model.pt')

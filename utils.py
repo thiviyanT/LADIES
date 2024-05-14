@@ -12,7 +12,11 @@ import os
 from torch_geometric.datasets import Planetoid, Yelp, Flickr, Reddit2
 from torch_geometric.utils import to_undirected
 from ogb.nodeproppred import NodePropPredDataset
-
+from typing import Tuple
+from linkx.dataset import load_snap_patents_mat
+import scipy.io
+from torch.utils.data import random_split
+from torch_geometric.data import Batch, Data
 
 def parse_index_file(filename):
     """Parse index file."""
@@ -23,19 +27,19 @@ def parse_index_file(filename):
 
 
 def load_torch_geom_data(dataset_name, root_dir):
-    """ """
+    """load datasets from pyg """
     if dataset_name.lower() == 'cora':
-        data = Planetoid(root=root_dir, name='Cora', split='full')[0]
+        data = Planetoid(root=f'{root_dir}/Planetoid', name='Cora', split='full')[0]
     elif dataset_name.lower() == 'citeseer':
-        data = Planetoid(root=root_dir, name='CiteSeer', split='full')[0]
+        data = Planetoid(root=f'{root_dir}/Planetoid', name='CiteSeer', split='full')[0]
     elif dataset_name.lower() == 'pubmed':
-        data = Planetoid(root=root_dir, name='PubMed', split='full')[0]
+        data = Planetoid(root=f'{root_dir}/Planetoid', name='PubMed', split='full')[0]
     elif dataset_name.lower() == 'reddit':
-        data = Reddit2(root=root_dir)[0]
+        data = Reddit2(root=f'{root_dir}/Reddit2')[0]
     elif dataset_name.lower() == 'yelp':
-        data = Yelp(root=root_dir)[0]
+        data = Yelp(root=f'{root_dir}/YELP')[0]
     elif dataset_name.lower() == 'flickr':
-        data = Flickr(root=root_dir)[0]
+        data = Flickr(root=f'{root_dir}/Flickr')[0]
     else:
 	    raise ValueError("Unknown dataset name. Supported datasets: reddit, yelp, flickr")
 
@@ -68,12 +72,12 @@ def load_data(dataset_str, data_dir=None):
     if dataset_str.lower() in ['cora', 'citeseer', 'pubmed', 'reddit', 'yelp', 'flickr']:
         assert data_dir is not None
         edges, labels, features, num_classes, idx_train, idx_val, idx_test = load_torch_geom_data(dataset_str,
-                                                                                                  root_dir=f'{data_dir}/{dataset_str}')
+                                                                                                  root_dir=f'{data_dir}')
 
         return edges, labels, features, num_classes, idx_train, idx_val, idx_test
     elif dataset_str.lower() in ['ogbn-arxiv', 'arxiv']:
         # Load the arxiv dataset
-        dataset = NodePropPredDataset(name="ogbn-arxiv")
+        dataset = NodePropPredDataset(name="ogbn-arxiv", root=f'{data_dir}/OGB')
 
         split_idx = dataset.get_idx_split()
         idx_train, idx_val, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
@@ -99,7 +103,7 @@ def load_data(dataset_str, data_dir=None):
 
     elif dataset_str.lower() in ['ogbn-products', 'products']:
         # Load the products dataset
-        dataset = NodePropPredDataset(name="ogbn-products")
+        dataset = NodePropPredDataset(name="ogbn-products", root=f'{data_dir}/OGB')
         split_idx = dataset.get_idx_split()
         idx_train, idx_val, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
 
@@ -191,6 +195,16 @@ def load_data(dataset_str, data_dir=None):
         
         return np.array(edges), np.array(degrees), np.array(labels), np.array(features),\
                 np.array(idx_train), np.array(idx_val), np.array(idx_test)
+    elif name.lower() == 'ogbn-proteins':
+        return get_proteins(root)
+    elif name.lower() == 'snap-patents':
+        return get_linkx_dataset(root, 'snap-patents', seed)
+    elif name.lower() in ['blogcat']:
+        return get_blogcat(root, name)
+    elif name.lower() == 'dblp':
+        return get_dblp(root, name, seed)
+
+
     # elif dataset_str.lower() in ['cora', 'pubmed', 'citeseer']:
     #     names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
     #     objects = []
@@ -236,6 +250,113 @@ def load_data(dataset_str, data_dir=None):
     #     return np.array(edges), labels, features, np.max(labels)+1,  idx_train, idx_val, idx_test
     else:
         raise NotImplementedError()
+
+
+def get_proteins(root: str):
+    dataset = PygNodePropPredDataset('ogbn-proteins', root)
+    data = dataset[0]
+
+    split_idx = dataset.get_idx_split()
+    data.train_mask = index2mask(split_idx['train'], data.num_nodes)
+    data.val_mask = index2mask(split_idx['valid'], data.num_nodes)
+    data.test_mask = index2mask(split_idx['test'], data.num_nodes)
+
+    # This is a multi-label binary classification dataset, so we need
+    # float targets for BCEWithLogitsLoss
+    data.y = data.y.float()
+
+    return data, dataset.num_features, data.y.shape[1]
+
+
+def get_linkx_dataset(root: str, name: str, seed: int = None):
+    if name.lower() == 'snap-patents':
+        dataset = load_snap_patents_mat(root)
+        split_idx = dataset.get_idx_split(seed=seed)
+        num_nodes = dataset.graph['num_nodes']
+        train_mask = index2mask(split_idx['train'], num_nodes)
+        valid_mask = index2mask(split_idx['valid'], num_nodes)
+        test_mask = index2mask(split_idx['test'], num_nodes)
+
+        edge_index = dataset.graph['edge_index']
+        edge_index = pygutils.to_undirected(edge_index, num_nodes=num_nodes)
+
+        data = Data(x=dataset.graph['node_feat'],
+                    edge_index=edge_index,
+                    y=dataset.label,
+                    train_mask=train_mask,
+                    val_mask=valid_mask,
+                    test_mask=test_mask)
+        num_classes = len(data.y.unique())
+    else:
+        raise ValueError(f'Unknown dataset name: {name}')
+
+def get_blogcat(root: str, name: str) -> Tuple[Data, int, int]:
+    dataset = torch.load(f'{root}/blogcatalog_0.6/split_0.pt')
+    graph = scipy.io.loadmat(f'{root}/blogcatalog_0.6/blogcatalog.mat')
+    edges = graph['network'].nonzero()
+    edge_index = torch.tensor(np.vstack((edges[0], edges[1])), dtype=torch.long)
+    train_mask = torch.zeros(10312, dtype=torch.bool)
+    test_mask = torch.zeros(10312, dtype=torch.bool)
+    val_mask = torch.zeros(10312, dtype=torch.bool)
+    train_mask[dataset['train_mask']] = True
+    test_mask[dataset['test_mask']] = True
+    val_mask[dataset['val_mask']] = True
+
+    data = Data(y=torch.tensor(graph['group'].todense()), edge_index=edge_index,
+                train_mask=train_mask, test_mask=test_mask, val_mask=val_mask,
+                num_classes=39, num_nodes=10312)
+    data.node_stores[0].x = torch.empty(data.num_nodes, 32)
+    return edge_index, torch.tensor(graph['group'].todense()), data.x, data.num_classes, dataset['train_mask'], dataset['val_mask'], dataset['test_mask']
+
+
+def get_dblp(root: str, name: str, seed: int = None) -> Tuple[Data, int, int]:
+    features = []
+    with open(f'{root}/features.txt', 'r') as file:
+        content = file.read()
+        values = content.strip().split('\n')
+        for value in values:
+            feature = value.split(',')
+            number = [float(i) for i in feature]
+            features.append(number)
+    edges = []
+    with open(f'{root}/dblp.edgelist', 'r') as file:
+        lines = file.readlines()
+        for line in lines:
+            parts = line.strip().split()
+            source_node = int(parts[0])
+            target_node = int(parts[1])
+            edges.append((source_node, target_node))
+            edges.append((source_node, target_node))
+
+    edge_index = torch.tensor(list(zip(*edges)), dtype=torch.long)
+    labels = []
+    with open(f'{root}/labels.txt', 'r') as file:
+        content = file.read()
+        values = content.strip().split('\n')
+        for value in values:
+            label = value.split(',')
+            number = [1. if float(x)==1 else 0. for x in label]
+            labels.append(number)
+    torch.manual_seed(seed)
+    num_nodes = 28702
+    train_ratio = 0.8
+    test_ratio = 0.1
+    num_train = int(train_ratio * num_nodes)
+    num_test = int(test_ratio * num_nodes)
+    num_val = num_nodes - num_train - num_test
+
+    train_idx, test_idx, val_idx = random_split(list(range(num_nodes)), [num_train, num_test, num_val])
+    train_mask = torch.zeros(28702, dtype=torch.bool)
+    test_mask = torch.zeros(28702, dtype=torch.bool)
+    val_mask = torch.zeros(28702, dtype=torch.bool)
+    train_mask[train_idx.indices] = True
+    test_mask[test_idx.indices] = True
+    val_mask[val_idx.indices] = True
+
+    data = Data(edge_index=edge_index, x=torch.tensor(features),y=torch.tensor(labels), train_mask=train_mask,
+                test_mask=test_mask, val_mask=val_mask, num_features=300)
+    data.node_stores[0].num_classes = 4
+    return data, data.num_features, data.num_classes
 
 
 def load_cora():
