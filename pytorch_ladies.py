@@ -51,7 +51,7 @@ parser.add_argument('--lr', type=float, default=0.001,
                     help='Learning rate')
 parser.add_argument('--embed_nodes', type=bool, default=False,
                     help='training the node embeddings')
-parser.add_argument('--node_emb_dim', type=float, default=64,
+parser.add_argument('--node_emb_dim', type=int, default=64,
                     help='node embeddings dimension')
 
 args = parser.parse_args()
@@ -191,24 +191,26 @@ else:
     
 print(args.dataset, args.sample_method)
 edges, labels, feat_data, num_classes, train_nodes, valid_nodes, test_nodes = load_data(args.dataset, data_dir=args.data_dir)
-
+#import pdb;pdb.set_trace()
 adj_matrix = get_adj(edges, feat_data.shape[0])
 
 lap_matrix = row_normalize(adj_matrix + sp.eye(adj_matrix.shape[0]))
 
-embedding_params = []
-if args.embed_nodes:
-    print(f'Using learned node embeddings for features')
-    embeddings = torch.FloatTensor(data.num_nodes, args.node_emb_dim)
-    nn.init.normal_(embeddings)
-    embeddings = nn.Parameter(embeddings, requires_grad=True)
-    feat_data = embeddings
-    embedding_params.append(embeddings)
+#embedding_params = []
+if not args.embed_nodes:
+    #print(f'Using learned node embeddings for features')
+    #pdb.set_trace()
+    #feat_data = torch.FloatTensor(feat_data.shape[0], args.node_emb_dim)
+    #nn.init.normal_(feat_data)
+    #feat_data = nn.Parameter(feat_data, requires_grad=True)
+    #feat_data = feat_data.to(device)
+    #embedding_params.append(feat_data)
 
-if type(feat_data) == scipy.sparse.lil.lil_matrix:
-    feat_data = torch.FloatTensor(feat_data.todense()).to(device) 
-else:
-    feat_data = torch.FloatTensor(feat_data).to(device)
+#else:
+    if type(feat_data) == scipy.sparse.lil.lil_matrix:
+        feat_data = torch.FloatTensor(feat_data.todense()).to(device) 
+    else:
+        feat_data = torch.FloatTensor(feat_data).to(device)
 labels = torch.LongTensor(labels).to(device)
 
 if labels.dim() == 1:
@@ -229,11 +231,21 @@ samp_num_list = np.array([args.samp_num, args.samp_num, args.samp_num, args.samp
 
 results = torch.empty(args.runs)
 for oiter in range(args.runs):
+    embedding_params = []
+    if args.embed_nodes:
+        print(f'Using learned node embeddings for features')
+        
+        feat = torch.FloatTensor(feat_data.shape[0], args.node_emb_dim)
+        nn.init.normal_(feat)
+        feat = nn.Parameter(feat, requires_grad=True)
+    #feat_data = feat_data.to(device)
+        embedding_params.append(feat)
+    
     encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, nclasses=num_classes,layers=args.n_layers, dropout = args.dropout).to(device)
     susage  = SuGCN(encoder = encoder, num_classes=num_classes, dropout= args.dropout, inp = feat_data.shape[1])
     susage.to(device)
     
-    optimizer = optim.Adam(filter(lambda p : p.requires_grad, list(susage.parameters()) + embedding_params), lr=args.lr)
+    optimizer = optim.Adam(list(susage.parameters()) + embedding_params, lr=args.lr)
     best_val = 0
     best_tst = -1
     cnt = 0
@@ -252,7 +264,12 @@ for oiter in range(args.runs):
             start_idx = i * args.batch_size
             end_idx = start_idx + args.batch_size
             train_batch_nodes = train_nodes[start_idx:end_idx]
-            #print('batch_number:', i) #pdb.set_trace()
+            print('batch_number:', i, "out of:", num_batches) #pdb.set_trace()
+            if args.embed_nodes:
+                 feat_data = feat.to(device) 
+                 #print(feat_data.size())
+   #         else:
+    #             feat_data = torch.FloatTensor(feat_data).to(device)
             adjs, input_nodes, output_nodes = prepare_data_unparallel(sampler,train_batch_nodes,samp_num_list,len(feat_data),lap_matrix,args.n_layers)
 
             # Training
@@ -267,53 +284,65 @@ for oiter in range(args.runs):
                 if labels.dim() != 1:
                     labels = labels.float()
                 loss_train = loss_fn(output, labels[output_nodes])
+                #if args.embed_nodes:
+                    #print('feat:',feat_data)
+                    #print('feat_data:', feat_data.mean())
+
+                #print('y:', labels[output_nodes][0], ', out:', output[0])
                 loss_train.backward()
-                torch.nn.utils.clip_grad_norm_(susage.parameters(), 0.2)
+                #torch.nn.utils.clip_grad_norm_(susage.parameters(), 0.2)
                 optimizer.step()
+                #if args.embed_nodes:
+                    #pdb.set_trace()
+                    #print('feat:',feat.grad.mean())
+                    #print('feat:', susage.parameters().grad.max())
                 times += [time.time() - t1]
                 train_losses += [loss_train.detach().tolist()]
                 del loss_train
 
-        idx = torch.randperm(len(valid_nodes))[:args.batch_size]
-        valid_batch_nodes = valid_nodes[idx]
-        valid_data = default_sampler(np.random.randint(2**32 - 1),
-                                     valid_batch_nodes,
-                                     samp_num_list*20,
-                                     len(feat_data),
-                                     lap_matrix,
-                                     args.n_layers)
+        #idx = torch.randperm(len(valid_nodes))[:args.batch_size]
+        #valid_batch_nodes = valid_nodes[idx]
+        batch_nodes = valid_nodes
+        adjs, input_nodes, output_nodes = default_sampler(np.random.randint(2**32 - 1), batch_nodes,
+                                    samp_num_list * 20, len(feat_data), lap_matrix, args.n_layers)
+        #valid_data = default_sampler(np.random.randint(2**32 - 1),
+         #                            valid_batch_nodes,
+          #                           samp_num_list*20,
+           #                          len(feat_data),
+            #                         lap_matrix,
+             #                        args.n_layers)
+        print(("Epoch: %d (%.1fs) Train Loss: %.2f")%                   (epoch, np.sum(times), np.average(train_losses)))
+    # Evaluation
+    susage.eval()
+    #adjs, input_nodes, output_nodes = valid_data
+    adjs = package_mxl(adjs, device)
+    output = susage.forward(feat_data[input_nodes], adjs)
+    output = output[output_nodes]
+    if labels.dim() != 1:
+        labels = labels.float()
+    loss_valid = loss_fn(output, labels[output_nodes]).detach().tolist()
 
-        # Evaluation
-        susage.eval()
-        adjs, input_nodes, output_nodes = valid_data
-        adjs = package_mxl(adjs, device)
-        output = susage.forward(feat_data[input_nodes], adjs)
-        output = output[output_nodes]
-        if labels.dim() != 1:
-            labels = labels.float()
-        loss_valid = loss_fn(output, labels[output_nodes]).detach().tolist()
+    if labels[output_nodes].dim() == 1:
+        predictions = output.argmax(dim=1).cpu()
+        targets = labels[output_nodes].cpu()
+        valid_f1 = f1_score(targets, predictions, average='micro')
+    else:
+        pred = output.cpu()
+        labl = labels.cpu()
+        y_pred = pred > 0
+        y_true = labl[output_nodes] > 0.5
 
-        if labels[output_nodes].dim() == 1:
-            predictions = output.argmax(dim=1).cpu()
-            targets = labels[output_nodes].cpu()
-            valid_f1 = f1_score(targets, predictions, average='micro')
-        else:
-            pred = output.cpu()
-            labl = labels.cpu()
-            y_pred = pred > 0
-            y_true = labl[output_nodes] > 0.5
+        tp = int((y_true & y_pred).sum())
+        fp = int((~y_true & y_pred).sum())
+        fn = int((y_true & ~y_pred).sum())
 
-            tp = int((y_true & y_pred).sum())
-            fp = int((~y_true & y_pred).sum())
-            fn = int((y_true & ~y_pred).sum())
-
-            try:
-                precision = tp / (tp + fp)
-                recall = tp / (tp + fn)
-                valid_f1 = accuracy = 2 * (precision * recall) / (precision + recall)
-            except ZeroDivisionError:
-                valid_f1 = 0.
-        print(("Epoch: %d (%.1fs) Train Loss: %.2f    Valid Loss: %.2f Valid F1: %.3f") %                   (epoch, np.sum(times), np.average(train_losses), loss_valid, valid_f1))
+        try:
+            precision = tp / (tp + fp)
+            recall = tp / (tp + fn)
+            valid_f1 = accuracy = 2 * (precision * recall) / (precision + recall)
+        except ZeroDivisionError:
+            valid_f1 = 0.
+        #print(("Epoch: %d (%.1fs) Train Loss: %.2f") %                   (epoch, np.sum(times), np.average(train_losses), loss_valid, valid_f1))
     print(f'Final Val Acc: {100*valid_f1:.2f}')
     #     if valid_f1 > best_val + 1e-2:
     #         best_val = valid_f1
