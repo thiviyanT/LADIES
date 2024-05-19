@@ -49,7 +49,12 @@ parser.add_argument('--cuda', type=int, default=0,
                     help='Avaiable GPU ID')
 parser.add_argument('--runs', type=int, default=1,
                     help='Number of runs')
-
+parser.add_argument('--lr', type=float, default=0.001,
+                    help='Learning rate')
+parser.add_argument('--embed_nodes', type=bool, default=False,
+                    help='training the node embeddings')
+parser.add_argument('--node_emb_dim', type=int, default=64,
+                    help='node embeddings dimension')
 args = parser.parse_args()
 
 
@@ -66,7 +71,7 @@ class GraphConvolution(nn.Module):
 
 
 class GCN(nn.Module):
-    def __init__(self, nfeat, nhid, layers, dropout):
+    def __init__(self, nfeat, nhid, nclasses, layers, dropout):
         super(GCN, self).__init__()
         self.layers = layers
         self.nhid = nhid
@@ -74,7 +79,7 @@ class GCN(nn.Module):
         self.gcs.append(GraphConvolution(nfeat, nhid))
         self.dropout = nn.Dropout(dropout)
         for i in range(layers - 1):
-            self.gcs.append(GraphConvolution(nhid, nhid))
+            self.gcs.append(GraphConvolution(nhid, nclasses))
 
     def forward(self, x, adjs):
         '''
@@ -90,13 +95,13 @@ class SuGCN(nn.Module):
     def __init__(self, encoder, num_classes, dropout, inp):
         super(SuGCN, self).__init__()
         self.encoder = encoder
-        self.dropout = nn.Dropout(dropout)
-        self.linear = nn.Linear(self.encoder.nhid, num_classes)
+        #self.dropout = nn.Dropout(dropout)
+        #self.linear = nn.Linear(self.encoder.nhid, num_classes)
 
     def forward(self, feat, adjs):
         x = self.encoder(feat, adjs)
-        x = self.dropout(x)
-        x = self.linear(x)
+        #x = self.dropout(x)
+        #x = self.linear(x)
         return x
 
 
@@ -182,7 +187,7 @@ def prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_
     idx = torch.randperm(len(valid_nodes))[:args.batch_size]
     batch_nodes = valid_nodes[idx]
     p = pool.apply_async(sampler, args=(
-    np.random.randint(2 ** 32 - 1), batch_nodes, samp_num_list * 20, num_nodes, lap_matrix, depth))
+    np.random.randint(2 ** 32 - 1), batch_nodes, samp_num_list, num_nodes, lap_matrix, depth))
     jobs.append(p)
     return jobs
 
@@ -203,11 +208,13 @@ edges, labels, feat_data, num_classes, train_nodes, valid_nodes, test_nodes = lo
 adj_matrix = get_adj(edges, feat_data.shape[0])
 
 lap_matrix = row_normalize(adj_matrix + sp.eye(adj_matrix.shape[0]))
-if type(feat_data) == scipy.sparse.lil.lil_matrix:
-    feat_data = torch.FloatTensor(feat_data.todense()).to(device)
-else:
-    feat_data = torch.FloatTensor(feat_data).to(device)
 labels = torch.LongTensor(labels).to(device)
+
+if not args.embed_nodes:
+    if type(feat_data) == scipy.sparse.lil.lil_matrix:
+        feat_data = torch.FloatTensor(feat_data.todense()).to(device) 
+    else:
+        feat_data = torch.FloatTensor(feat_data).to(device)
 
 if labels.dim() == 1:
     loss_fn = nn.CrossEntropyLoss()
@@ -221,6 +228,7 @@ elif args.sample_method == 'fastgcn':
 elif args.sample_method == 'full':
     sampler = default_sampler
 
+#num_batches = len(train_nodes) // args.batch_size if len(train_nodes) // args.batch_size != 0 else 1
 process_ids = np.arange(args.batch_num)
 samp_num_list = np.array([args.samp_num, args.samp_num, args.samp_num, args.samp_num, args.samp_num])
 
@@ -230,11 +238,20 @@ jobs = prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_n
 
 results = torch.empty(args.runs)
 for oiter in range(args.runs):
-    encoder = GCN(nfeat=feat_data.shape[1], nhid=args.nhid, layers=args.n_layers, dropout=0.2).to(device)
-    susage = SuGCN(encoder=encoder, num_classes=num_classes, dropout=0.5, inp=feat_data.shape[1])
+    embedding_params = []
+    if args.embed_nodes:
+        print(f'Using learned node embeddings for features')
+        
+        feat = torch.FloatTensor(feat_data.shape[0], args.node_emb_dim)
+        nn.init.normal_(feat)
+        feat = nn.Parameter(feat, requires_grad=True)
+    #feat_data = feat_data.to(device)
+        embedding_params.append(feat)
+    encoder = GCN(nfeat=feat_data.shape[1], nhid=args.nhid, nclasses=num_classes, layers=args.n_layers, dropout=0).to(device)
+    susage = SuGCN(encoder=encoder, num_classes=num_classes, dropout=0, inp=feat_data.shape[1])
     susage.to(device)
 
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, susage.parameters()))
+    optimizer = optim.Adam(list(susage.parameters())+embedding_params, lr=args.lr)
     best_val = 0
     best_tst = -1
     cnt = 0
@@ -252,6 +269,8 @@ for oiter in range(args.runs):
         '''
             Use CPU-GPU cooperation to reduce the overhead for sampling. (conduct sampling while training)
         '''
+        if args.embed_nodes:
+                 feat_data = feat.to(device) 
         jobs = prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_list, len(feat_data),
                             lap_matrix, args.n_layers)
         for _iter in range(args.n_iters):
@@ -261,13 +280,14 @@ for oiter in range(args.runs):
                 t1 = time.time()
                 susage.train()
                 output = susage.forward(feat_data[input_nodes], adjs)
+                #import pdb;pdb.set_trace()
                 if args.sample_method == 'full':
                     output = output[output_nodes]
                 if labels.dim() != 1:
                     labels = labels.float()
                 loss_train = loss_fn(output, labels[output_nodes])
                 loss_train.backward()
-                torch.nn.utils.clip_grad_norm_(susage.parameters(), 0.2)
+                #torch.nn.utils.clip_grad_norm_(susage.parameters(), 0.2)
                 optimizer.step()
                 times += [time.time() - t1]
                 train_losses += [loss_train.detach().tolist()]
@@ -287,6 +307,7 @@ for oiter in range(args.runs):
             targets = labels[output_nodes].cpu()
             valid_f1 = f1_score(targets, predictions, average='micro')
         else:
+            print(output, labels)
             pred = output.cpu()
             labl = labels.cpu()
             y_pred = pred > 0
@@ -359,7 +380,7 @@ for oiter in range(args.runs):
             test_f1s = 0.
 
     print('Iteration: %d, Test F1: %.3f' % (oiter + 1, np.average(test_f1s)))
-    results[oiter] = np.average([test_f1s])
+    results[oiter] = np.average([valid_f1])
 
 '''
     Visualize the train-test curve
