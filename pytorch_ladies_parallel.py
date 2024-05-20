@@ -125,6 +125,7 @@ def fastgcn_sampler(seed, batch_nodes, samp_num_list, num_nodes, lap_matrix, dep
         #     sample the next layer's nodes based on the pre-computed probability (p).
         s_num = np.min([np.sum(p > 0), samp_num_list[d]])
         after_nodes = np.random.choice(num_nodes, s_num, p=p, replace=False)
+        after_nodes = np.unique(np.concatenate((after_nodes, batch_nodes)))
         #     col-select the lap_matrix (U), and then devided by the sampled probability for
         #     unbiased-sampling. Finally, conduct row-normalization to avoid value explosion.
         adj = row_normalize(U[:, after_nodes].multiply(1 / p[after_nodes]))
