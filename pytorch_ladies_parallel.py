@@ -308,7 +308,7 @@ for oiter in range(args.runs):
             targets = labels[output_nodes].cpu()
             valid_f1 = f1_score(targets, predictions, average='micro')
         else:
-            print(output, labels)
+            #print(output, labels)
             pred = output.cpu()
             labl = labels.cpu()
             y_pred = pred > 0
