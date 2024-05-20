@@ -11,12 +11,13 @@ import sys
 import os
 from torch_geometric.datasets import Planetoid, Yelp, Flickr, Reddit2
 from torch_geometric.utils import to_undirected
-from ogb.nodeproppred import NodePropPredDataset
+from ogb.nodeproppred import PygNodePropPredDataset, NodePropPredDataset
 from typing import Tuple
 from linkx.dataset import load_snap_patents_mat
 import scipy.io
 from torch.utils.data import random_split
 from torch_geometric.data import Batch, Data
+from torch import Tensor 
 
 def parse_index_file(filename):
     """Parse index file."""
@@ -195,14 +196,14 @@ def load_data(dataset_str, data_dir=None):
         
         return np.array(edges), np.array(degrees), np.array(labels), np.array(features),\
                 np.array(idx_train), np.array(idx_val), np.array(idx_test)
-    elif name.lower() == 'ogbn-proteins':
-        return get_proteins(root)
-    elif name.lower() == 'snap-patents':
-        return get_linkx_dataset(root, 'snap-patents', seed)
-    elif name.lower() in ['blogcat']:
-        return get_blogcat(root, name)
-    elif name.lower() == 'dblp':
-        return get_dblp(root, name, seed)
+    elif dataset_str.lower() == 'ogbn-proteins':
+        return get_proteins(data_dir)
+    elif dataset_str.lower() == 'snap-patents':
+        return get_linkx_dataset(data_dir, 'snap-patents', 0)
+    elif dataset_str.lower() in ['blogcat']:
+        return get_blogcat(data_dir, dataset_str, 0)
+    elif dataset_str.lower() == 'dblp':
+        return get_dblp(data_dir, dataset_str, 42)
 
 
     # elif dataset_str.lower() in ['cora', 'pubmed', 'citeseer']:
@@ -252,20 +253,39 @@ def load_data(dataset_str, data_dir=None):
         raise NotImplementedError()
 
 
-def get_proteins(root: str):
+def get_proteins(root: str, node_emb_dim: int = 128):
     dataset = PygNodePropPredDataset('ogbn-proteins', root)
     data = dataset[0]
 
     split_idx = dataset.get_idx_split()
-    data.train_mask = index2mask(split_idx['train'], data.num_nodes)
-    data.val_mask = index2mask(split_idx['valid'], data.num_nodes)
-    data.test_mask = index2mask(split_idx['test'], data.num_nodes)
+    
+    idx_train, idx_val, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
 
+    # Edge info
+    edge_index = dataset.edge_index
+    edges = edge_index
+
+    # Features and labels
+    features = torch.empty(data.num_nodes, node_emb_dim)
+    #nn.init.normal_(features)
+    #features = nn.Parameter(features, requires_grad=True)
+    labels = dataset.y.numpy()
+
+        # Standardize the features
+        # train_feats = features[idx_train]
+        # scaler = StandardScaler()
+        # scaler.fit(train_feats)
+        # features = scaler.transform(features)
+
+        # Num classes
+    num_classes = labels.shape[1]
+    #import pdb;pdb.set_trace()
+    return edges, labels, features, num_classes, idx_train, idx_val, idx_test
     # This is a multi-label binary classification dataset, so we need
     # float targets for BCEWithLogitsLoss
-    data.y = data.y.float()
+    #data.y = data.y.float()
 
-    return data, dataset.num_features, data.y.shape[1]
+    #return data, dataset.num_features, data.y.shape[1]
 
 
 def get_linkx_dataset(root: str, name: str, seed: int = None):
@@ -278,7 +298,7 @@ def get_linkx_dataset(root: str, name: str, seed: int = None):
         test_mask = index2mask(split_idx['test'], num_nodes)
 
         edge_index = dataset.graph['edge_index']
-        edge_index = pygutils.to_undirected(edge_index, num_nodes=num_nodes)
+        edge_index = to_undirected(edge_index, num_nodes=num_nodes)
 
         data = Data(x=dataset.graph['node_feat'],
                     edge_index=edge_index,
@@ -289,10 +309,12 @@ def get_linkx_dataset(root: str, name: str, seed: int = None):
         num_classes = len(data.y.unique())
     else:
         raise ValueError(f'Unknown dataset name: {name}')
+    return edge_index, dataset.label, dataset.graph['node_feat'], len(data.y.unique()), split_idx['train'], split_idx['valid'], split_idx['test']
 
-def get_blogcat(root: str, name: str) -> Tuple[Data, int, int]:
-    dataset = torch.load(f'{root}/blogcatalog_0.6/split_0.pt')
-    graph = scipy.io.loadmat(f'{root}/blogcatalog_0.6/blogcatalog.mat')
+
+def get_blogcat(root: str, name: str, split_id: int=0) -> Tuple[Data, int, int]:
+    dataset = torch.load(f'{root}/blogcat/blogcatalog_0.6/split_{split_id}.pt')
+    graph = scipy.io.loadmat(f'{root}/blogcat/blogcatalog_0.6/blogcatalog.mat')
     edges = graph['network'].nonzero()
     edge_index = torch.tensor(np.vstack((edges[0], edges[1])), dtype=torch.long)
     train_mask = torch.zeros(10312, dtype=torch.bool)
@@ -301,17 +323,17 @@ def get_blogcat(root: str, name: str) -> Tuple[Data, int, int]:
     train_mask[dataset['train_mask']] = True
     test_mask[dataset['test_mask']] = True
     val_mask[dataset['val_mask']] = True
-
+ 
     data = Data(y=torch.tensor(graph['group'].todense()), edge_index=edge_index,
                 train_mask=train_mask, test_mask=test_mask, val_mask=val_mask,
                 num_classes=39, num_nodes=10312)
-    data.node_stores[0].x = torch.empty(data.num_nodes, 32)
-    return edge_index, torch.tensor(graph['group'].todense()), data.x, data.num_classes, dataset['train_mask'], dataset['val_mask'], dataset['test_mask']
+    data.node_stores[0].x = torch.empty(data.num_nodes, 64)
+    return edge_index, graph['group'].todense(), data.x, data.num_classes, dataset['train_mask'], dataset['val_mask'], dataset['test_mask']
 
 
 def get_dblp(root: str, name: str, seed: int = None) -> Tuple[Data, int, int]:
     features = []
-    with open(f'{root}/features.txt', 'r') as file:
+    with open(f'{root}/dblp/features.txt', 'r') as file:
         content = file.read()
         values = content.strip().split('\n')
         for value in values:
@@ -319,7 +341,7 @@ def get_dblp(root: str, name: str, seed: int = None) -> Tuple[Data, int, int]:
             number = [float(i) for i in feature]
             features.append(number)
     edges = []
-    with open(f'{root}/dblp.edgelist', 'r') as file:
+    with open(f'{root}/dblp/dblp.edgelist', 'r') as file:
         lines = file.readlines()
         for line in lines:
             parts = line.strip().split()
@@ -330,7 +352,7 @@ def get_dblp(root: str, name: str, seed: int = None) -> Tuple[Data, int, int]:
 
     edge_index = torch.tensor(list(zip(*edges)), dtype=torch.long)
     labels = []
-    with open(f'{root}/labels.txt', 'r') as file:
+    with open(f'{root}/dblp/labels.txt', 'r') as file:
         content = file.read()
         values = content.strip().split('\n')
         for value in values:
@@ -356,7 +378,7 @@ def get_dblp(root: str, name: str, seed: int = None) -> Tuple[Data, int, int]:
     data = Data(edge_index=edge_index, x=torch.tensor(features),y=torch.tensor(labels), train_mask=train_mask,
                 test_mask=test_mask, val_mask=val_mask, num_features=300)
     data.node_stores[0].num_classes = 4
-    return data, data.num_features, data.num_classes
+    return edge_index, np.array(labels), np.array(features), 4, np.array(train_idx.indices), np.array(val_idx.indices), np.array(test_idx.indices)
 
 
 def load_cora():
@@ -462,3 +484,31 @@ def get_adj(edges, num_nodes):
 def get_laplacian(adj):
     adj = row_normalize(adj + sp.eye(adj.shape[0]))
     return sparse_mx_to_torch_sparse_tensor(adj) 
+
+def index2mask(idx: Tensor, size: int) -> Tensor:
+    mask = torch.zeros(size, dtype=torch.bool, device=idx.device)
+    mask[idx] = True
+    return mask
+
+
+def gen_masks(y: Tensor, train_per_class: int = 20, val_per_class: int = 30,
+              num_splits: int = 20) -> Tuple[Tensor, Tensor, Tensor]:
+    num_classes = int(y.max()) + 1
+
+    train_mask = torch.zeros(y.size(0), num_splits, dtype=torch.bool)
+    val_mask = torch.zeros(y.size(0), num_splits, dtype=torch.bool)
+
+    for c in range(num_classes):
+        idx = (y == c).nonzero(as_tuple=False).view(-1)
+        perm = torch.stack(
+            [torch.randperm(idx.size(0)) for _ in range(num_splits)], dim=1)
+        idx = idx[perm]
+
+        train_idx = idx[:train_per_class]
+        train_mask.scatter_(0, train_idx, True)
+        val_idx = idx[train_per_class:train_per_class + val_per_class]
+        val_mask.scatter_(0, val_idx, True)
+
+    test_mask = ~(train_mask | val_mask)
+
+    return train_mask, val_mask, test_mask
